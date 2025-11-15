@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/xml"
 	"fmt"
-	"html"
 	"io"
 	"log"
 	"net/http"
@@ -43,6 +42,12 @@ func main() {
 	commands.register("follow", middlewareLoggedIn(handlerFollow))
 	commands.register("following", middlewareLoggedIn(handlerFollows))
 	commands.register("unfollow", middlewareLoggedIn(handlerUnfollow))
+	commands.register("help", func(s *state, cmd command) error {
+		for key, _ := range commands.commands {
+			fmt.Println(key)
+		}
+		return nil
+	})
 
 	if len(os.Args) < 2 {
 		log.Printf("Invalid argument length.  Expecting command argument.")
@@ -164,20 +169,11 @@ func handlerAggregate(s *state, cmd command) error {
 	if durationErr != nil {
 		log.Fatalf("%w", durationErr)
 	}
+	fmt.Println("Collecting feeds every %s", dur.String())
 	ticker := time.NewTicker(dur)
 	for ; ; <-ticker.C {
-		rssFeed, err := fetchFeed(context.Background(), "https://www.wagslane.dev/index.xml")
-		if err != nil {
-			log.Fatal("Couldn't fetch rss feed.")
-			os.Exit(1)
-		}
-		rssFeed.Channel.Title = html.UnescapeString(rssFeed.Channel.Title)
-		rssFeed.Channel.Description = html.UnescapeString(rssFeed.Channel.Description)
-		for i, item := range rssFeed.Channel.Item {
-			rssFeed.Channel.Item[i].Title = html.UnescapeString(item.Title)
-			rssFeed.Channel.Item[i].Description = html.UnescapeString(item.Description)
-		}
-		fmt.Printf("%+v\n", rssFeed)
+		fmt.Printf("--- scrapeFeeds at %s ---\n", time.Now().String())
+		scrapeFeeds(s)
 	}
 
 	return nil
@@ -288,7 +284,7 @@ func scrapeFeeds(s *state) {
 	}
 	if &feed == nil {
 		log.Println("No feeds available to scrape.")
-		return
+		os.Exit(1)
 	}
 	markErr := s.db.MarkFeedFetched(context.Background(), database.MarkFeedFetchedParams{
 		LastFetchedAt: sql.NullTime{Time: time.Now(), Valid: true},
@@ -303,6 +299,7 @@ func scrapeFeeds(s *state) {
 		log.Fatal("Unable to fetch feed at url %s", feed.Url)
 		os.Exit(1)
 	}
+	fmt.Printf("~~~~ CHANNEL %s ~~~~\n", rssFeed.Channel.Title)
 	for _, item := range rssFeed.Channel.Item {
 		fmt.Printf("%s\n", item.Title)
 	}
