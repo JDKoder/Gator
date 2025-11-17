@@ -1,6 +1,6 @@
 # Gator
 
-CLI for multi user RSS feed aggregation.  Stores user and feeds from given urls in local database.  Feeds can be continuously aggregated in a background process.  Users can follow specific feeds and browse their feeds on demand.
+CLI for multi user RSS feed aggregation ( aggre gator ) stores user and feeds from given urls in local database.  Feeds can be continuously aggregated in a background process.  Users can follow specific feeds and browse their feeds on demand.
 
 # Dependencies
 
