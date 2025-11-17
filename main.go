@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"strconv"
+
 	"github.com/JDKoder/Gator/internal/config"
 	"github.com/JDKoder/Gator/internal/database"
 	"github.com/google/uuid"
@@ -42,6 +44,7 @@ func main() {
 	commands.register("follow", middlewareLoggedIn(handlerFollow))
 	commands.register("following", middlewareLoggedIn(handlerFollows))
 	commands.register("unfollow", middlewareLoggedIn(handlerUnfollow))
+	commands.register("browse", middlewareLoggedIn(handlerBrowse))
 	commands.register("help", func(s *state, cmd command) error {
 		for key, _ := range commands.commands {
 			fmt.Println(key)
@@ -278,12 +281,8 @@ func handlerUnfollow(s *state, cmd command, user database.User) error {
 
 func scrapeFeeds(s *state) {
 	feed, err := s.db.GetNextFeedToFetch(context.Background())
-	if err != nil {
-		log.Fatalf("Could not get next feed to fetch: %w", err)
-		os.Exit(1)
-	}
-	if &feed == nil {
-		log.Println("No feeds available to scrape.")
+	if err != nil || feed.ID == uuid.Nil {
+		log.Fatalf("Could not get next feed to fetch: %v", err)
 		os.Exit(1)
 	}
 	markErr := s.db.MarkFeedFetched(context.Background(), database.MarkFeedFetchedParams{
@@ -296,11 +295,66 @@ func scrapeFeeds(s *state) {
 
 	rssFeed, fetchErr := fetchFeed(context.Background(), feed.Url)
 	if fetchErr != nil {
-		log.Fatal("Unable to fetch feed at url %s", feed.Url)
+		log.Fatalf("Unable to fetch feed at url %s", feed.Url)
 		os.Exit(1)
 	}
 	fmt.Printf("~~~~ CHANNEL %s ~~~~\n", rssFeed.Channel.Title)
 	for _, item := range rssFeed.Channel.Item {
-		fmt.Printf("%s\n", item.Title)
+		pubTime, timeParseErr := time.Parse(time.RFC1123Z, item.PubDate)
+		if timeParseErr != nil {
+			log.Printf("could not parse time from value %s\n", item.PubDate)
+		}
+		_, createPostErr := s.db.CreatePost(context.Background(), database.CreatePostParams{
+			ID:          uuid.New(),
+			Title:       item.Title,
+			Url:         item.Link,
+			Description: sql.NullString{String: item.Description, Valid: true},
+			PublishedAt: sql.NullTime{
+				Time:  pubTime,
+				Valid: true,
+			},
+			FeedID:    feed.ID,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		})
+		if createPostErr != nil {
+			if strings.Contains(createPostErr.Error(), "violates unique constraint \"posts_url_key\"") {
+				continue
+			} else {
+				log.Printf("Could not create post for item %s: %v", item.Title, createPostErr)
+			}
+		}
 	}
+}
+
+func handlerBrowse(s *state, cmd command, user database.User) error {
+	limit := 2
+	if len(cmd.args) < 1 {
+		log.Printf("Using default browse limit: 2\n")
+	} else {
+		userLimit, strconvErr := strconv.Atoi(cmd.args[0])
+		if strconvErr != nil {
+			log.Printf("could not convert user value to integer.  Defaulting to limit 2")
+			limit = 2
+		} else {
+			limit = userLimit
+		}
+
+	}
+	posts, getPostsErr := s.db.GetPostsForUser(context.Background(), database.GetPostsForUserParams{
+		UserID: user.ID,
+		Limit:  int32(limit),
+	})
+	if getPostsErr != nil {
+		log.Fatalf("Unable to get posts for user: %s", getPostsErr.Error())
+		os.Exit(1)
+	}
+	for _, post := range posts {
+		fmt.Printf("\n~~~~\n\n")
+		fmt.Printf("%s\n", post.Title)
+		fmt.Printf("URL: %s\n", post.Url)
+		fmt.Printf("Description: %s\n", post.Description.String)
+		fmt.Printf("PubDate: %s\n", post.PublishedAt.Time)
+	}
+	return nil
 }
